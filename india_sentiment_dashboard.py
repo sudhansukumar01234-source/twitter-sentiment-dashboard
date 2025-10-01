@@ -1,5 +1,5 @@
 # -----------------------------
-# india_sentiment_dashboard.py
+# india_sentiment_dashboard_final.py
 # -----------------------------
 
 import streamlit as st
@@ -7,6 +7,7 @@ import tweepy
 import pandas as pd
 import matplotlib.pyplot as plt
 from textblob import TextBlob
+from wordcloud import WordCloud, STOPWORDS
 
 # -----------------------------
 # Twitter API Authentication
@@ -17,7 +18,7 @@ client = tweepy.Client(bearer_token=BEARER_TOKEN, wait_on_rate_limit=True)
 # -----------------------------
 # Streamlit UI
 # -----------------------------
-st.title("Twitter Sentiment Dashboard (Fast Fetch)")
+st.title("Twitter Sentiment Dashboard (Fast + WordCloud + Trend)")
 keyword = st.text_input("Enter Keyword / Hashtag / Query:", "Pakistan")
 max_results = st.slider("Max Tweets to Fetch:", 5, 20, 10)  # Small batch for speed
 
@@ -27,16 +28,12 @@ max_results = st.slider("Max Tweets to Fetch:", 5, 20, 10)  # Small batch for sp
 def fetch_tweets_fast(query, max_results=10):
     all_tweets = []
     try:
-        # Minimal filters for speed
         final_query = f"{query}"  # optional: add '-is:retweet lang:en' if needed
-
         response = client.search_recent_tweets(
             query=final_query,
             tweet_fields=["created_at", "geo", "lang", "public_metrics"],
-            max_results=max_results,
-            timeout=5  # wait max 5 seconds
+            max_results=max_results
         )
-
         if response.data:
             for tweet in response.data:
                 all_tweets.append({
@@ -85,6 +82,38 @@ if st.button("Fetch Tweets"):
         ax2.pie(sentiment_counts, labels=sentiment_counts.index, autopct='%1.1f%%', startangle=140)
         ax2.axis('equal')
         st.pyplot(fig2)
+
+        # -----------------------------
+        # WordCloud (ignoring stopwords and hashtags)
+        # -----------------------------
+        st.subheader("WordCloud of Tweets")
+        all_text = " ".join(df['text'].tolist())
+        stopwords = set(STOPWORDS)
+        wordcloud = WordCloud(
+            width=800,
+            height=400,
+            background_color='white',
+            stopwords=stopwords,
+            collocations=False
+        ).generate(all_text)
+        fig_wc, ax_wc = plt.subplots(figsize=(10, 5))
+        ax_wc.imshow(wordcloud, interpolation='bilinear')
+        ax_wc.axis('off')
+        st.pyplot(fig_wc)
+
+        # -----------------------------
+        # Date-wise Tweet Trend
+        # -----------------------------
+        st.subheader("Tweet Trend Over Time")
+        df['date'] = pd.to_datetime(df['created_at']).dt.date
+        trend = df.groupby('date').size()
+        fig_trend, ax_trend = plt.subplots()
+        trend.plot(kind='line', marker='o', ax=ax_trend)
+        ax_trend.set_xlabel("Date")
+        ax_trend.set_ylabel("Number of Tweets")
+        ax_trend.set_title("Tweet Trend Over Time")
+        plt.tight_layout()
+        st.pyplot(fig_trend)
 
         # -----------------------------
         # Top 5 Liked Tweets
