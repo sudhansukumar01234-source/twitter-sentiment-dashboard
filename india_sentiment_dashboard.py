@@ -1,39 +1,42 @@
 # -----------------------------
-# streamlit_twitter_dashboard.py (Optimized Version)
+# india_sentiment_dashboard.py
 # -----------------------------
 
 import streamlit as st
 import tweepy
 import pandas as pd
 import matplotlib.pyplot as plt
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from textblob import TextBlob
 
 # -----------------------------
 # Twitter API Authentication
 # -----------------------------
-BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAADs64gEAAAAARicDLnHNcwLF%2BAVtZFkWs4qBurs%3D0pnuLJ3ZuGO2dsd7YKX6fMv41UzjuPKaTkf1Uf8VvFN5SiaSF9"  # replace with your token
+BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAIA34gEAAAAAPVDfrGnqYneeFtziMYFg4XC9LF4%3DXPJZd5cFT88eLnXrLbzG8QxLQ2wZ4ThfUAFG0zVeXSlj0NheiQ"
 client = tweepy.Client(bearer_token=BEARER_TOKEN, wait_on_rate_limit=True)
 
 # -----------------------------
 # Streamlit UI
 # -----------------------------
-st.title("Twitter Sentiment Dashboard")
+st.title("Twitter Sentiment Dashboard (Fast Fetch)")
 keyword = st.text_input("Enter Keyword / Hashtag / Query:", "Pakistan")
-max_results = st.slider("Max Tweets to Fetch:", 10, 100, 30)
+max_results = st.slider("Max Tweets to Fetch:", 5, 20, 10)  # Small batch for speed
 
 # -----------------------------
-# Function to fetch tweets (cached)
+# Fast Fetch Function
 # -----------------------------
-@st.cache_data(ttl=300)  # cache for 5 minutes
-def fetch_tweets(query, max_results=50):
+def fetch_tweets_fast(query, max_results=10):
     all_tweets = []
     try:
-        final_query = f"{query} -is:retweet lang:en"
+        # Minimal filters for speed
+        final_query = f"{query}"  # optional: add '-is:retweet lang:en' if needed
+
         response = client.search_recent_tweets(
             query=final_query,
-            tweet_fields=["created_at", "lang", "public_metrics"],
-            max_results=max_results
+            tweet_fields=["created_at", "geo", "lang", "public_metrics"],
+            max_results=max_results,
+            timeout=5  # wait max 5 seconds
         )
+
         if response.data:
             for tweet in response.data:
                 all_tweets.append({
@@ -43,9 +46,8 @@ def fetch_tweets(query, max_results=50):
                     "retweets": tweet.public_metrics.get("retweet_count"),
                     "likes": tweet.public_metrics.get("like_count")
                 })
-    except tweepy.TooManyRequests:
-        st.error("⚠️ Rate limit reached. Try again later.")
-        return []
+    except Exception as e:
+        st.error(f"Error fetching tweets: {e}")
     return all_tweets
 
 # -----------------------------
@@ -53,44 +55,35 @@ def fetch_tweets(query, max_results=50):
 # -----------------------------
 if st.button("Fetch Tweets"):
     st.info("Fetching tweets...")
-    tweets = fetch_tweets(keyword, max_results)
-
+    tweets = fetch_tweets_fast(keyword, max_results)
+    
     if tweets:
         df = pd.DataFrame(tweets)
         st.success(f"Fetched {len(df)} tweets")
         st.dataframe(df)
 
         # -----------------------------
-        # Sentiment Analysis (VADER)
+        # Language Pie Chart
         # -----------------------------
-        sia = SentimentIntensityAnalyzer()
-        df['sentiment'] = df['text'].apply(lambda x: sia.polarity_scores(x)['compound'])
-        df['sentiment_label'] = df['sentiment'].apply(
-            lambda x: 'Positive' if x > 0 else ('Negative' if x < 0 else 'Neutral')
-        )
-
-        # -----------------------------
-        # Sentiment Pie Chart
-        # -----------------------------
-        st.subheader("Sentiment Analysis (Pie Chart)")
-        sentiment_counts = df['sentiment_label'].value_counts()
-        colors = ['green' if label == 'Positive' else 'red' if label == 'Negative' else 'gray'
-                  for label in sentiment_counts.index]
+        st.subheader("Language Distribution")
+        lang_counts = df['lang'].value_counts()
         fig1, ax1 = plt.subplots()
-        ax1.pie(sentiment_counts, labels=sentiment_counts.index, autopct='%1.1f%%',
-                startangle=140, colors=colors)
+        ax1.pie(lang_counts, labels=lang_counts.index, autopct='%1.1f%%', startangle=140)
         ax1.axis('equal')
         st.pyplot(fig1)
 
         # -----------------------------
-        # Sentiment Bar Chart
+        # Sentiment Analysis Pie Chart
         # -----------------------------
-        st.subheader("Sentiment Analysis (Bar Chart)")
+        st.subheader("Sentiment Analysis")
+        df['sentiment'] = df['text'].apply(lambda x: TextBlob(x).sentiment.polarity)
+        df['sentiment_label'] = df['sentiment'].apply(
+            lambda x: 'Positive' if x > 0 else ('Negative' if x < 0 else 'Neutral')
+        )
+        sentiment_counts = df['sentiment_label'].value_counts()
         fig2, ax2 = plt.subplots()
-        sentiment_counts.plot(kind='bar', ax=ax2, color=colors)
-        ax2.set_xlabel("Sentiment")
-        ax2.set_ylabel("Number of Tweets")
-        ax2.set_title("Sentiment Distribution")
+        ax2.pie(sentiment_counts, labels=sentiment_counts.index, autopct='%1.1f%%', startangle=140)
+        ax2.axis('equal')
         st.pyplot(fig2)
 
         # -----------------------------
@@ -98,10 +91,10 @@ if st.button("Fetch Tweets"):
         # -----------------------------
         st.subheader("Top 5 Liked Tweets")
         top_likes = df.nlargest(5, 'likes')
-        top_likes['short_text'] = top_likes['text'].apply(lambda x: x[:50] + "..." if len(x) > 50 else x)
         fig3, ax3 = plt.subplots()
-        ax3.barh(top_likes['short_text'], top_likes['likes'], color='skyblue')
+        ax3.barh(top_likes['text'], top_likes['likes'], color='skyblue')
         ax3.set_xlabel("Likes")
+        ax3.set_ylabel("Tweet")
         ax3.set_title("Top 5 Liked Tweets")
         plt.tight_layout()
         st.pyplot(fig3)
@@ -111,13 +104,13 @@ if st.button("Fetch Tweets"):
         # -----------------------------
         st.subheader("Top 5 Retweeted Tweets")
         top_retweets = df.nlargest(5, 'retweets')
-        top_retweets['short_text'] = top_retweets['text'].apply(lambda x: x[:50] + "..." if len(x) > 50 else x)
         fig4, ax4 = plt.subplots()
-        ax4.barh(top_retweets['short_text'], top_retweets['retweets'], color='orange')
+        ax4.barh(top_retweets['text'], top_retweets['retweets'], color='orange')
         ax4.set_xlabel("Retweets")
+        ax4.set_ylabel("Tweet")
         ax4.set_title("Top 5 Retweeted Tweets")
         plt.tight_layout()
         st.pyplot(fig4)
 
     else:
-        st.warning("No tweets found. Try a different keyword or later.")
+        st.warning("No tweets found. Try a different keyword or increase max results.")
