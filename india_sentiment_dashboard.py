@@ -1,6 +1,9 @@
 # -----------------------------
-# india_sentiment_dashboard_final.py
+# india_sentiment_dashboard.py
 # -----------------------------
+import os
+import matplotlib
+matplotlib.use("Agg")  # Needed for Render
 
 import streamlit as st
 import tweepy
@@ -8,32 +11,49 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from textblob import TextBlob
 from wordcloud import WordCloud, STOPWORDS
+from datetime import datetime, timedelta
 
 # -----------------------------
 # Twitter API Authentication
 # -----------------------------
-BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAIA34gEAAAAAPVDfrGnqYneeFtziMYFg4XC9LF4%3DXPJZd5cFT88eLnXrLbzG8QxLQ2wZ4ThfUAFG0zVeXSlj0NheiQ"
-client = tweepy.Client(bearer_token=BEARER_TOKEN, wait_on_rate_limit=True)
+BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
+
+if not BEARER_TOKEN:
+    st.error("⚠ Twitter Bearer Token not found! Please set TWITTER_BEARER_TOKEN in Render dashboard.")
+else:
+    st.success("✅ Twitter Token loaded.")
+
+client = None
+if BEARER_TOKEN:
+    try:
+        client = tweepy.Client(bearer_token=BEARER_TOKEN, wait_on_rate_limit=False)
+    except Exception as e:
+        st.error(f"Error initializing Twitter client: {e}")
 
 # -----------------------------
 # Streamlit UI
 # -----------------------------
-st.title("Twitter Sentiment Dashboard (Fast + WordCloud + Trend)")
+st.title("📊 Twitter Sentiment Dashboard (with WordCloud + Trends)")
 keyword = st.text_input("Enter Keyword / Hashtag / Query:", "Pakistan")
-max_results = st.slider("Max Tweets to Fetch:", 5, 20, 10)  # Small batch for speed
+max_results = st.slider("Max Tweets to Fetch:", 5, 20, 10)
 
 # -----------------------------
 # Fast Fetch Function
 # -----------------------------
 def fetch_tweets_fast(query, max_results=10):
     all_tweets = []
+    if not client:
+        return all_tweets
+
     try:
-        final_query = f"{query}"  # optional: add '-is:retweet lang:en' if needed
+        final_query = f"{query} lang:en -is:retweet"
         response = client.search_recent_tweets(
             query=final_query,
             tweet_fields=["created_at", "geo", "lang", "public_metrics"],
             max_results=max_results
         )
+        st.write("🔎 Raw API Response:", response)  # Debug
+
         if response.data:
             for tweet in response.data:
                 all_tweets.append({
@@ -48,21 +68,43 @@ def fetch_tweets_fast(query, max_results=10):
     return all_tweets
 
 # -----------------------------
+# Mock Data (Fallback)
+# -----------------------------
+def generate_mock_data(query, n=10):
+    now = datetime.now()
+    mock = []
+    for i in range(n):
+        mock.append({
+            "text": f"This is a mock tweet about {query} #{i}",
+            "created_at": now - timedelta(minutes=i*5),
+            "lang": "en",
+            "retweets": i * 2,
+            "likes": i * 3
+        })
+    return mock
+
+# -----------------------------
 # Main Logic
 # -----------------------------
 if st.button("Fetch Tweets"):
-    st.info("Fetching tweets...")
+    st.info("⏳ Fetching tweets...")
+
     tweets = fetch_tweets_fast(keyword, max_results)
-    
+
+    # If API fails, fallback to mock
+    if not tweets:
+        st.warning("⚠ No tweets fetched from Twitter API. Showing demo data instead.")
+        tweets = generate_mock_data(keyword, max_results)
+
     if tweets:
         df = pd.DataFrame(tweets)
-        st.success(f"Fetched {len(df)} tweets")
+        st.success(f"✅ Showing {len(df)} tweets")
         st.dataframe(df)
 
         # -----------------------------
         # Language Pie Chart
         # -----------------------------
-        st.subheader("Language Distribution")
+        st.subheader("🌍 Language Distribution")
         lang_counts = df['lang'].value_counts()
         fig1, ax1 = plt.subplots()
         ax1.pie(lang_counts, labels=lang_counts.index, autopct='%1.1f%%', startangle=140)
@@ -72,7 +114,7 @@ if st.button("Fetch Tweets"):
         # -----------------------------
         # Sentiment Analysis Pie Chart
         # -----------------------------
-        st.subheader("Sentiment Analysis")
+        st.subheader("😊 Sentiment Analysis")
         df['sentiment'] = df['text'].apply(lambda x: TextBlob(x).sentiment.polarity)
         df['sentiment_label'] = df['sentiment'].apply(
             lambda x: 'Positive' if x > 0 else ('Negative' if x < 0 else 'Neutral')
@@ -84,9 +126,9 @@ if st.button("Fetch Tweets"):
         st.pyplot(fig2)
 
         # -----------------------------
-        # WordCloud (ignoring stopwords and hashtags)
+        # WordCloud
         # -----------------------------
-        st.subheader("WordCloud of Tweets")
+        st.subheader("☁ WordCloud of Tweets")
         all_text = " ".join(df['text'].tolist())
         stopwords = set(STOPWORDS)
         wordcloud = WordCloud(
@@ -104,7 +146,7 @@ if st.button("Fetch Tweets"):
         # -----------------------------
         # Date-wise Tweet Trend
         # -----------------------------
-        st.subheader("Tweet Trend Over Time")
+        st.subheader("📈 Tweet Trend Over Time")
         df['date'] = pd.to_datetime(df['created_at']).dt.date
         trend = df.groupby('date').size()
         fig_trend, ax_trend = plt.subplots()
@@ -118,7 +160,7 @@ if st.button("Fetch Tweets"):
         # -----------------------------
         # Top 5 Liked Tweets
         # -----------------------------
-        st.subheader("Top 5 Liked Tweets")
+        st.subheader("🔥 Top 5 Liked Tweets")
         top_likes = df.nlargest(5, 'likes')
         fig3, ax3 = plt.subplots()
         ax3.barh(top_likes['text'], top_likes['likes'], color='skyblue')
@@ -131,7 +173,7 @@ if st.button("Fetch Tweets"):
         # -----------------------------
         # Top 5 Retweeted Tweets
         # -----------------------------
-        st.subheader("Top 5 Retweeted Tweets")
+        st.subheader("🔁 Top 5 Retweeted Tweets")
         top_retweets = df.nlargest(5, 'retweets')
         fig4, ax4 = plt.subplots()
         ax4.barh(top_retweets['text'], top_retweets['retweets'], color='orange')
@@ -142,4 +184,4 @@ if st.button("Fetch Tweets"):
         st.pyplot(fig4)
 
     else:
-        st.warning("No tweets found. Try a different keyword or increase max results.")
+        st.error("❌ Still no tweets available, even with mock data.")
